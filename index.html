@@ -45,6 +45,17 @@
         <main class="main">
             <!-- شريط الأدوات -->
             <div class="toolbar">
+                <div class="data-actions">
+                    <button class="btn primary" onclick="downloadData()">
+                        <i class="fas fa-download"></i>
+                        تحميل البيانات
+                    </button>
+                    <label class="btn success upload-btn">
+                        <i class="fas fa-upload"></i>
+                        رفع البيانات
+                        <input type="file" id="uploadData" accept=".json" onchange="uploadData(event)" style="display: none;">
+                    </label>
+                </div>
                 <div class="search">
                     <input type="text" id="searchInput" placeholder="بحث..." oninput="handleSearch()">
                 </div>

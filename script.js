@@ -22,6 +22,117 @@ function saveData() {
     localStorage.setItem('equipmentSystem', JSON.stringify(state));
 }
 
+// تحميل البيانات كملف JSON
+function downloadData() {
+    const data = {
+        inventory: state.inventory,
+        boxes: state.boxes,
+        missingItems: state.missingItems,
+        activities: state.activities
+    };
+    
+    const dataStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `equipment_management_${today}.json`;
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showNotification('تم تحميل البيانات بنجاح');
+}
+
+// رفع البيانات من ملف JSON
+function uploadData(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = JSON.parse(e.target.result);
+            
+            // التحقق من صحة البيانات
+            if (!validateData(data)) {
+                showNotification('الملف غير صالح. يجب أن يحتوي على جميع البيانات المطلوبة', 'error');
+                return;
+            }
+            
+            // حفظ البيانات القديمة للاسترجاع في حالة حدوث خطأ
+            const oldState = { ...state };
+            
+            try {
+                // تحديث البيانات
+                state.inventory = data.inventory;
+                state.boxes = data.boxes;
+                state.missingItems = data.missingItems;
+                state.activities = data.activities;
+                
+                // إضافة نشاط استيراد البيانات
+                addActivity(
+                    'تم استيراد البيانات من ملف',
+                    'system',
+                    {
+                        action: 'import',
+                        filename: file.name
+                    }
+                );
+                
+                // تحديث العرض وحفظ البيانات
+                renderAll();
+                saveData();
+                showNotification('تم رفع البيانات بنجاح');
+                
+            } catch (error) {
+                // استرجاع البيانات القديمة في حالة حدوث خطأ
+                state = oldState;
+                showNotification('حدث خطأ أثناء تحديث البيانات', 'error');
+                console.error('Error updating data:', error);
+            }
+            
+        } catch (error) {
+            showNotification('فشل في قراءة الملف. تأكد من أن الملف بتنسيق JSON صحيح', 'error');
+            console.error('Error parsing JSON:', error);
+        }
+    };
+    
+    reader.readAsText(file);
+    // إعادة تعيين حقل الملف للسماح برفع نفس الملف مرة أخرى
+    event.target.value = '';
+}
+
+// التحقق من صحة البيانات المستوردة
+function validateData(data) {
+    // التحقق من وجود جميع الأقسام المطلوبة
+    if (!data.inventory || !Array.isArray(data.inventory)) return false;
+    if (!data.boxes || !Array.isArray(data.boxes)) return false;
+    if (!data.missingItems || !Array.isArray(data.missingItems)) return false;
+    if (!data.activities || !Array.isArray(data.activities)) return false;
+    
+    // التحقق من صحة بيانات المخزون
+    for (const item of data.inventory) {
+        if (!item.id || !item.name || typeof item.quantity !== 'number') {
+            return false;
+        }
+    }
+    
+    // التحقق من صحة بيانات الصناديق
+    for (const box of data.boxes) {
+        if (!box.id || !Array.isArray(box.items)) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
 // إضافة نشاط جديد
 function addActivity(text, category, details = {}) {
     const activity = {
@@ -896,6 +1007,7 @@ function exportBoxToExcel(boxId) {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 // تحسين وظيفة تعديل المخزون
@@ -1178,9 +1290,7 @@ function editBox(boxId) {
                     <select required>
                         <option value="">اختر معدة</option>
                         ${state.inventory.map(invItem => `
-                            <option value="${invItem.id}" 
-                                data-available="${invItem.quantity - invItem.used}"
-                                data-name="${invItem.name}">
+                            <option value="${invItem.id}" ${invItem.id === item.id ? 'selected' : ''}>
                                 ${invItem.name} (متاح: ${invItem.quantity - invItem.used})
                             </option>
                         `).join('')}
@@ -1188,9 +1298,7 @@ function editBox(boxId) {
                 </div>
                 <div>
                     <label>الكمية</label>
-                    <input type="number" name="items[${item.id}][quantity]" 
-                        placeholder="الكمية" required min="1" 
-                        value="${item.quantity}">
+                    <input type="number" min="1" value="${item.quantity}" required>
                 </div>
                 <button type="button" class="btn danger" onclick="this.parentElement.parentElement.remove()">حذف</button>
             </div>
@@ -1841,7 +1949,7 @@ function showEditBox(boxId) {
         itemDiv.innerHTML = `
             <div class="form-group">
                 <select name="items[${index}][id]" required onchange="updateEditBoxItemQuantity(this)">
-                    <option value="">اختر المعدة</option>
+                    <option value="">اختر معدة</option>
                     ${state.inventory.map(invItem => `
                         <option value="${invItem.id}" 
                             data-available="${invItem.quantity - invItem.used + (invItem.id === item.id ? item.quantity : 0)}"
@@ -2023,181 +2131,3 @@ function restoreBox(activityId) {
     renderAll();
     saveData();
 }
-
-// إضافة وظائف مراقبة المعدات
-function checkEquipmentStatus() {
-    const lowStockThreshold = 5; // الحد الأدنى للمخزون
-    const alerts = [];
-
-    // فحص المخزون المنخفض
-    state.inventory.forEach(item => {
-        const available = item.quantity - item.used;
-        if (available <= lowStockThreshold) {
-            alerts.push({
-                type: 'low_stock',
-                itemId: item.id,
-                itemName: item.name,
-                available: available,
-                message: `المعدة "${item.name}" منخفضة في المخزون (${available} متبقية)`
-            });
-        }
-    });
-
-    // فحص المعدات المتأخرة
-    const now = new Date();
-    state.boxes.forEach(box => {
-        if (box.dueDate) {
-            const dueDate = new Date(box.dueDate);
-            if (dueDate < now) {
-                alerts.push({
-                    type: 'overdue',
-                    boxId: box.id,
-                    boxName: box.name || box.receiver,
-                    dueDate: box.dueDate,
-                    message: `الصندوق "${box.name || box.receiver}" متأخر عن موعد الإرجاع (${formatDate(box.dueDate)})`
-                });
-            }
-        }
-    });
-
-    // فحص المعدات المفقودة التي لم يتم تعويضها
-    const unresolvedMissing = state.missingItems.filter(item => item.status !== 'resolved');
-    if (unresolvedMissing.length > 0) {
-        alerts.push({
-            type: 'missing',
-            count: unresolvedMissing.length,
-            message: `يوجد ${unresolvedMissing.length} معدات مفقودة لم يتم تعويضها`
-        });
-    }
-
-    return alerts;
-}
-
-// عرض التنبيهات
-function displayAlerts(alerts) {
-    const alertsContainer = document.getElementById('alertsContainer') || createAlertsContainer();
-    alertsContainer.innerHTML = '';
-
-    if (alerts.length === 0) {
-        alertsContainer.style.display = 'none';
-        return;
-    }
-
-    alerts.forEach(alert => {
-        const alertElement = document.createElement('div');
-        alertElement.className = `alert alert-${alert.type}`;
-        alertElement.innerHTML = `
-            <i class="fas ${getAlertIcon(alert.type)}"></i>
-            <span>${alert.message}</span>
-            <button class="btn-close" onclick="dismissAlert(this)">
-                <i class="fas fa-times"></i>
-            </button>
-        `;
-        alertsContainer.appendChild(alertElement);
-    });
-
-    alertsContainer.style.display = 'block';
-}
-
-// إنشاء حاوية التنبيهات
-function createAlertsContainer() {
-    const container = document.createElement('div');
-    container.id = 'alertsContainer';
-    container.className = 'alerts-container';
-    document.body.appendChild(container);
-    return container;
-}
-
-// الحصول على أيقونة التنبيه
-function getAlertIcon(type) {
-    switch (type) {
-        case 'low_stock': return 'fa-exclamation-triangle';
-        case 'overdue': return 'fa-clock';
-        case 'missing': return 'fa-search';
-        default: return 'fa-bell';
-    }
-}
-
-// إغلاق التنبيه
-function dismissAlert(button) {
-    const alert = button.closest('.alert');
-    alert.style.opacity = '0';
-    setTimeout(() => alert.remove(), 300);
-}
-
-// تحديث حالة النظام
-function updateSystemStatus() {
-    const alerts = checkEquipmentStatus();
-    displayAlerts(alerts);
-    updateDashboardStats();
-}
-
-// تحديث إحصائيات لوحة المعلومات
-function updateDashboardStats() {
-    const stats = {
-        totalItems: state.inventory.length,
-        totalBoxes: state.boxes.length,
-        activeBoxes: state.boxes.filter(box => !box.returned).length,
-        missingItems: state.missingItems.filter(item => item.status !== 'resolved').length,
-        lowStockItems: state.inventory.filter(item => (item.quantity - item.used) <= 5).length
-    };
-
-    const statsContainer = document.getElementById('dashboardStats') || createStatsContainer();
-    statsContainer.innerHTML = `
-        <div class="stat-card">
-            <i class="fas fa-boxes"></i>
-            <div class="stat-info">
-                <h3>إجمالي المعدات</h3>
-                <p>${stats.totalItems}</p>
-            </div>
-        </div>
-        <div class="stat-card">
-            <i class="fas fa-box"></i>
-            <div class="stat-info">
-                <h3>الصناديق النشطة</h3>
-                <p>${stats.activeBoxes} / ${stats.totalBoxes}</p>
-            </div>
-        </div>
-        <div class="stat-card ${stats.missingItems > 0 ? 'warning' : ''}">
-            <i class="fas fa-search"></i>
-            <div class="stat-info">
-                <h3>المعدات المفقودة</h3>
-                <p>${stats.missingItems}</p>
-            </div>
-        </div>
-        <div class="stat-card ${stats.lowStockItems > 0 ? 'danger' : ''}">
-            <i class="fas fa-exclamation-triangle"></i>
-            <div class="stat-info">
-                <h3>معدات منخفضة</h3>
-                <p>${stats.lowStockItems}</p>
-            </div>
-        </div>
-    `;
-}
-
-// إنشاء حاوية الإحصائيات
-function createStatsContainer() {
-    const container = document.createElement('div');
-    container.id = 'dashboardStats';
-    container.className = 'dashboard-stats';
-    document.querySelector('.main-content').prepend(container);
-    return container;
-}
-
-// تنسيق التاريخ
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('ar-EG', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-}
-
-// تحديث النظام كل دقيقة
-setInterval(updateSystemStatus, 60000);
-
-// تحديث النظام عند تحميل الصفحة
-document.addEventListener('DOMContentLoaded', () => {
-    updateSystemStatus();
-});
